@@ -1,0 +1,9 @@
+# sekrety lokalne
+config.py
+*.env
+secrets.json
+
+# śmieci Pythona
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
