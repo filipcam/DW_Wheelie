@@ -25,7 +25,7 @@ Each layer is followed by a data quality gate – if a blocking test fails, the 
 
 | Path | Description |
 |---|---|
-| `00_init.ipynb` | Creates the schemas, staging/dw tables and the `dw.calendar` table. **Drops all existing schemas and data.** |
+| `00_init.ipynb` | Creates the schemas, staging/dw tables, the `dw.calendar` table and the reporting view `dw.v_fact_rental`. **Drops all existing schemas and data.** |
 | `10_extract_bronze.ipynb` | Copies every MySQL table into `landing` (one thread per table) |
 | `11_test_bronze.ipynb` | Runs the bronze data quality tests |
 | `20_transform_silver.ipynb` | Cleanses cars and geography, builds equipment groups in `staging` |
@@ -33,7 +33,7 @@ Each layer is followed by a data quality gate – if a blocking test fails, the 
 | `30_load_gold.ipynb` | Loads dimensions, bridge tables and facts into `dw` |
 | `31_test_gold.ipynb` | Runs the gold data quality tests |
 | `tests/` | pytest data quality suites (see [Data quality tests](#data-quality-tests)) |
-| `delete_stag_dw_data.ipynb` | Utility: deletes all rows from the `staging` and `dw` tables |
+| `delete_stag_dw_data.ipynb` | Utility: deletes all rows from the `staging` and `dw` tables, keeping the table definitions, views and `dw.calendar` (`landing` is not touched) |
 | `config.example.py` | Template for the MySQL connection settings |
 
 **Naming convention**: pipeline notebooks are prefixed with a two-digit number – the first digit is the layer
@@ -50,8 +50,10 @@ the utility notebook `delete_stag_dw_data` has no number.
 4. **Run the pipeline** in this order, either manually or as a Databricks Job with one task per notebook:
    `10_extract_bronze` → `11_test_bronze` → `20_transform_silver` → `21_test_silver` → `30_load_gold` → `31_test_gold`.
 
-The gold load is incremental (MERGE / INSERT of new rows), so the pipeline (everything except `00_init`) can be
-re-run to pick up changes from the source.
+The gold load is incremental, so the pipeline (everything except `00_init`) can be re-run to pick up changes from
+the source. Dimensions are merged (SCD1/SCD2). In `fact_rental`, new rentals are inserted and open (unpaid) rentals
+are updated when a payment arrives or the return date changes; paid rentals and the dimension keys of a rental are
+not changed after loading.
 
 ## Data model (gold)
 
@@ -82,8 +84,18 @@ re-run to pick up changes from the source.
 | `bridge_staff_hierarchy` | Every staff member linked to all managers above them, with `distance` (1 = direct manager) |
 | `bridge_equipment_group_equipment` | Equipment items belonging to each equipment group |
 
-SCD2 dimensions use `valid_from`, `valid_to` (`9999-12-31` for the current version) and `is_active`.
-Unpaid rentals have `payment_date = 9999-12-31` and `payment_amount = 0`.
+**Reporting view**
+
+| View | Purpose |
+|---|---|
+| `v_fact_rental` | Same rows and columns as `fact_rental` (without the technical `rental_key`), but `payment_delay_days` is calculated at query time: the actual delay for paid rentals, and the days overdue as of today for unpaid ones. Adds `is_overdue` (unpaid and past the payment deadline). **Reports should query this view instead of `fact_rental`.** |
+
+**Conventions**
+
+- SCD2 dimensions use `valid_from`, `valid_to` (`9999-12-31` for the current version) and `is_active`.
+- Each rental has at most one payment (business agreement, enforced by bronze check `L01`).
+- Unpaid rentals are stored in `fact_rental` with `payment_date = 9999-12-31`, `payment_amount = 0` and
+  `payment_delay_days = 0`; their current overdue days are available in `v_fact_rental`.
 
 ## Data cleansing rules (silver)
 
@@ -103,9 +115,9 @@ Tests are written with **pytest** and split by layer – each layer checks what 
 
 | Suite | Blocks the pipeline when | Reports as a warning |
 |---|---|---|
-| `tests/test_bronze.py` | A table is missing or empty, required columns are missing, row counts differ from MySQL, primary keys are duplicated | Source data issues (orphaned references, multiple payments per rental, invalid dates) |
+| `tests/test_bronze.py` | A table is missing or empty, required columns are missing, row counts differ from MySQL, primary keys are duplicated, a rental has more than one payment | Source data issues (orphaned references, invalid dates) |
 | `tests/test_silver.py` | Cleansing rules were not applied, keys or lookups are inconsistent, equipment groups are incomplete or unstable | Suspicious values (very low prices, cars without equipment, addresses without a country) |
-| `tests/test_gold.py` | Source vs warehouse reconciliation fails, keys or foreign keys are invalid, SCD2 history is broken, measures are miscalculated, date dimensions or bridges are wrong | Business anomalies (overpayments, very long rentals, customer age) |
+| `tests/test_gold.py` | Source vs warehouse reconciliation fails, keys or foreign keys are invalid, SCD2 history is broken, measures are miscalculated, the reporting view is inconsistent with the fact table, date dimensions or bridges are wrong | Business anomalies (overpayments, very long rentals, customer age) |
 
 Each check is a SQL query returning the rows that **violate** a rule – an empty result means the check passes.
 Checks with severity `error` fail with an `assert` (the message includes the row count, sample rows and the query);
@@ -113,8 +125,8 @@ checks with severity `warning` pass but appear in the pytest warnings summary.
 
 **Running the tests**
 
-- **On Databricks**: run the matching test notebook (`11_test_bronze`, `21_test_silver` or `31_test_gold`). It installs pytest, runs the suite and raises an
-  exception if any blocking check fails, which stops a Databricks Job.
+- **On Databricks**: run the matching test notebook (`11_test_bronze`, `21_test_silver` or `31_test_gold`).
+  It installs pytest, runs the suite and raises an exception if any blocking check fails, which stops a Databricks Job.
 - **Locally**: install [Databricks Connect](https://docs.databricks.com/en/dev-tools/databricks-connect/python/index.html)
   and pytest, configure a Databricks profile, then run `pytest tests/`.
 
