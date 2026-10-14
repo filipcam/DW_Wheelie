@@ -1,4 +1,4 @@
-"""Gold (dw) tests - run after 03_load_gold, before the data is consumed by reports.
+"""Gold (dw) tests - run after 30_load_gold, before the data is consumed by reports.
 
 Verifies the dimensional model itself (keys, foreign keys, SCD2 history, computed measures, date dimensions,
 bridge tables) and reconciles it end to end with the source (landing).
@@ -323,8 +323,13 @@ FACT_RULES = [
         SELECT * FROM dw.fact_rental
         WHERE payment_date <> DATE'9999-12-31'
           AND payment_delay_days <> GREATEST(0, DATEDIFF(payment_date, payment_deadline))"""),
-    Check("R07", "fact_rental: unpaid => payment_amount = 0", """
-        SELECT * FROM dw.fact_rental WHERE payment_date = DATE'9999-12-31' AND payment_amount <> 0"""),
+    # payment_amount = 0 is how 30_load_gold recognises open rentals, so both markers must agree
+    Check("R07", "fact_rental: unpaid (payment_date = 9999-12-31) <=> payment_amount = 0", """
+        SELECT * FROM dw.fact_rental
+        WHERE (payment_date =  DATE'9999-12-31' AND payment_amount <> 0)
+           OR (payment_date <> DATE'9999-12-31' AND payment_amount =  0)"""),
+    Check("R16", "fact_rental: unpaid => payment_delay_days = 0 (overdue days live in v_fact_rental)", """
+        SELECT * FROM dw.fact_rental WHERE payment_amount = 0 AND payment_delay_days <> 0"""),
     Check("R08", "fact_rental: amount paid differs from amount due", """
         SELECT * FROM dw.fact_rental
         WHERE payment_date <> DATE'9999-12-31' AND payment_amount <> rental_amount""", WARNING),
@@ -349,6 +354,27 @@ FACT_RULES = [
         SELECT f.*, d.service_date FROM dw.fact_service f
         JOIN dw.dim_service_date d ON d.service_date_key = f.service_date_key
         WHERE d.service_date > current_date()""", WARNING),
+]
+
+# ---------------------------------------------------------------------------------------------------------------
+# 7b. Reporting view v_fact_rental (payment delay calculated at query time)
+# ---------------------------------------------------------------------------------------------------------------
+REPORTING_VIEWS = [
+    Check("V01", "v_fact_rental: one row per fact_rental row", """
+        SELECT view_cnt, fact_cnt FROM (
+          SELECT (SELECT COUNT(*) FROM dw.v_fact_rental) AS view_cnt,
+                 (SELECT COUNT(*) FROM dw.fact_rental) AS fact_cnt)
+        WHERE view_cnt <> fact_cnt"""),
+    Check("V02", "v_fact_rental: delay = stored delay (paid) or days overdue as of today (unpaid)", """
+        SELECT v.rental_id, v.payment_amount, v.payment_deadline, v.payment_delay_days, f.payment_delay_days AS fact_delay
+        FROM dw.v_fact_rental v JOIN dw.fact_rental f ON f.rental_id = v.rental_id
+        WHERE v.payment_delay_days <> CASE
+                WHEN f.payment_amount = 0 THEN GREATEST(DATEDIFF(current_date(), f.payment_deadline), 0)
+                ELSE f.payment_delay_days END"""),
+    Check("V03", "v_fact_rental: is_overdue only for unpaid rentals past the deadline", """
+        SELECT rental_id, payment_amount, payment_deadline, payment_delay_days, is_overdue
+        FROM dw.v_fact_rental
+        WHERE NOT (is_overdue <=> (payment_amount = 0 AND payment_delay_days > 0))"""),
 ]
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -491,7 +517,7 @@ BRIDGES = [
 ]
 
 CHECKS = (COMPLETENESS + UNIQUENESS + NOT_NULL + REFERENTIAL_INTEGRITY + SCD + CAR_RULES + FACT_RULES
-          + PEOPLE_RULES + DATE_DIMENSIONS + BRIDGES)
+          + REPORTING_VIEWS + PEOPLE_RULES + DATE_DIMENSIONS + BRIDGES)
 
 
 @pytest.mark.parametrize("check", as_params(CHECKS))

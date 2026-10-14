@@ -1,4 +1,4 @@
-"""Bronze (landing) tests - run after 01_extract_bronze.
+"""Bronze (landing) tests - run after 10_extract_bronze.
 
 Bronze is a faithful copy of the source, so it is only blocked when the EXTRACT is broken
 (missing/empty tables, missing columns, row counts different from MySQL, duplicated primary keys
@@ -79,10 +79,11 @@ CHECKS = [
     *[unique(f"BK{i:02d}", f"landing.{table}", pk)
       for i, (table, (pk, _)) in enumerate(LANDING_TABLES.items(), start=1) if pk],
 
+    # business agreement: exactly one payment per rental - the fact_rental MERGE in 30_load_gold relies on it
+    Check("L01", "landing.payment: at most one payment per rental", """
+        SELECT rental_id, COUNT(*) AS payments FROM landing.payment GROUP BY rental_id HAVING COUNT(*) > 1"""),
+
     # source data issues - reported, not blocking
-    Check("L01", "landing.payment: multiple payments for one rental (duplicates the fact)", """
-        SELECT rental_id, COUNT(*) AS payments FROM landing.payment GROUP BY rental_id HAVING COUNT(*) > 1""",
-          WARNING),
     foreign_key("L02", "landing.payment", "rental_id", "landing.rental", "rental_id", WARNING),
     Check("L03", "landing.rental: return_date < rental_date or return_date missing", """
         SELECT * FROM landing.rental WHERE return_date IS NULL OR return_date < rental_date""", WARNING),
