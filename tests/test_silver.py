@@ -1,6 +1,6 @@
-"""Silver (staging) tests - run after 02_transform_silver, before 03_load_gold.
+"""Silver (staging) tests - run after 20_transform_silver, before 30_load_gold.
 
-This is the main gate: it verifies that the cleansing rules from 02_transform_silver were applied
+This is the main gate: it verifies that the cleansing rules from 20_transform_silver were applied
 and that staging is internally consistent, so bad data never reaches the gold layer.
 """
 import pytest
