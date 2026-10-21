@@ -141,7 +141,7 @@ UNIQUENESS = [
 # 3. Required values (NOT NULL)
 # ---------------------------------------------------------------------------------------------------------------
 NOT_NULL = [
-    not_null("N01", "dw.fact_rental", ["customer_key", "car_key", "store_key", "staff_key", "eqipment_group_key",
+    not_null("N01", "dw.fact_rental", ["customer_key", "car_key", "store_key", "staff_key", "equipment_group_key",
                                        "rental_date_key", "return_date", "payment_date", "payment_deadline"]),
     not_null("N02", "dw.fact_service", ["car_key", "service_date_key", "service_type", "service_cost"]),
     not_null("N03", "dw.dim_car", ["car_producer", "car_model", "car_production_year",
@@ -179,7 +179,7 @@ REFERENTIAL_INTEGRITY = [
     foreign_key("F02", "dw.fact_rental", "car_key", "dw.dim_car", "car_key"),
     foreign_key("F03", "dw.fact_rental", "store_key", "dw.dim_store", "store_key"),
     foreign_key("F04", "dw.fact_rental", "staff_key", "dw.dim_staff", "staff_key"),
-    foreign_key("F05", "dw.fact_rental", "eqipment_group_key", "dw.dim_equipment_group", "equipment_group_key"),
+    foreign_key("F05", "dw.fact_rental", "equipment_group_key", "dw.dim_equipment_group", "equipment_group_key"),
     foreign_key("F06", "dw.fact_rental", "rental_date_key", "dw.dim_rental_date", "rental_date_key"),
     foreign_key("F07", "dw.fact_service", "car_key", "dw.dim_car", "car_key"),
     foreign_key("F08", "dw.fact_service", "service_date_key", "dw.dim_service_date", "service_date_key"),
@@ -511,7 +511,7 @@ BRIDGES = [
         SELECT f.rental_id, c.car_inventory_id, g.equipment_group_id, ieg.eq_group_id
         FROM dw.fact_rental f
         JOIN dw.dim_car c ON c.car_key = f.car_key
-        JOIN dw.dim_equipment_group g ON g.equipment_group_key = f.eqipment_group_key
+        JOIN dw.dim_equipment_group g ON g.equipment_group_key = f.equipment_group_key
         JOIN staging.inventory_equipment_groups ieg ON ieg.inventory_id = c.car_inventory_id
         WHERE g.equipment_group_id <> ieg.eq_group_id"""),
 ]
